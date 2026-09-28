@@ -2,6 +2,8 @@ package service
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"time"
 
@@ -23,7 +25,103 @@ func NewTripService(repo *repository.Repository, txManager txmanager.TxManager) 
 	}
 }
 
-func (s *TripService) CreateTrip(ctx context.Context, data api.TripData) (*api.Trip, error) {
+func computeRequestHash(data api.TripData) string {
+	h := sha256.New()
+	fmt.Fprintf(h, "%s:%s:%.6f:%.6f:%.6f:%.6f:%d",
+		data.UserId.String(),
+		data.DriverId.String(),
+		data.StartPoint.Latitude,
+		data.StartPoint.Longitude,
+		data.EndPoint.Latitude,
+		data.EndPoint.Longitude,
+		data.Price,
+	)
+	return hex.EncodeToString(h.Sum(nil))
+}
+
+func (s *TripService) CreateTrip(ctx context.Context, data api.TripData, idempotencyKey *uuid.UUID) (*api.Trip, bool, error) {
+	if idempotencyKey == nil {
+		trip, err := s.createTripInternal(ctx, data)
+		return trip, false, err
+	}
+
+	reqHash := computeRequestHash(data)
+	var (
+		resTrip  *api.Trip
+		isReplay bool
+	)
+
+	err := s.txManager.Do(ctx, func(txCtx context.Context) error {
+		if err := s.repo.LockIdempotencyKey(txCtx, *idempotencyKey); err != nil {
+			return fmt.Errorf("lock idempotency key: %w", err)
+		}
+
+		rec, err := s.repo.GetIdempotencyRecord(txCtx, *idempotencyKey)
+		if err != nil {
+			return fmt.Errorf("get idempotency record: %w", err)
+		}
+
+		now := time.Now().UTC()
+
+		if rec != nil {
+			if rec.ExpiresAt.After(now) {
+				if rec.RequestHash == reqHash {
+					existingTrip, err := s.repo.GetTripByID(txCtx, rec.TripID)
+					if err != nil {
+						return fmt.Errorf("get existing trip by idempotency: %w", err)
+					}
+					resTrip = existingTrip
+					isReplay = true
+					return nil
+				}
+				return ErrIdempotencyConflict
+			}
+		}
+
+		tripID := uuid.New()
+		trip := &api.Trip{
+			Id:         tripID,
+			UserId:     data.UserId,
+			DriverId:   data.DriverId,
+			StartPoint: data.StartPoint,
+			EndPoint:   data.EndPoint,
+			Price:      data.Price,
+			Status:     api.Active,
+			StartedAt:  now,
+			FinishedAt: nil,
+		}
+
+		if err := s.repo.CreateTrip(txCtx, trip); err != nil {
+			return err
+		}
+
+		if err := s.repo.AddStatusHistory(txCtx, tripID, nil, string(api.Active), nil, now); err != nil {
+			return fmt.Errorf("add status history: %w", err)
+		}
+
+		newRec := &repository.IdempotencyRecord{
+			Key:         *idempotencyKey,
+			RequestHash: reqHash,
+			TripID:      tripID,
+			CreatedAt:   now,
+			ExpiresAt:   now.Add(24 * time.Hour),
+		}
+		if err := s.repo.SaveIdempotencyRecord(txCtx, newRec); err != nil {
+			return fmt.Errorf("save idempotency record: %w", err)
+		}
+
+		resTrip = trip
+		isReplay = false
+		return nil
+	})
+	if err != nil {
+		return nil, false, err
+	}
+
+	return resTrip, isReplay, nil
+}
+
+func (s *TripService) createTripInternal(ctx context.Context, data api.TripData) (*api.Trip, error) {
 	tripID := uuid.New()
 	now := time.Now().UTC()
 

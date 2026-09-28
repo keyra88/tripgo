@@ -62,15 +62,19 @@ func (h *Handler) CreateTrip(w http.ResponseWriter, r *http.Request, params api.
 		return
 	}
 
-	trip, err := h.service.CreateTrip(r.Context(), req)
+	trip, isReplay, err := h.service.CreateTrip(r.Context(), req, params.IdempotencyKey)
 	if err != nil {
 		handleError(w, r, err)
 		return
 	}
 
-	w.Header().Set("Location", fmt.Sprintf("/api/v1/trips/%s", trip.Id.String()))
 	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusCreated)
+	if isReplay {
+		w.WriteHeader(http.StatusOK)
+	} else {
+		w.Header().Set("Location", fmt.Sprintf("/api/v1/trips/%s", trip.Id.String()))
+		w.WriteHeader(http.StatusCreated)
+	}
 	_ = json.NewEncoder(w).Encode(trip)
 }
 

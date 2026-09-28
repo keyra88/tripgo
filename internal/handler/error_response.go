@@ -64,6 +64,15 @@ func handleError(w http.ResponseWriter, r *http.Request, err error) {
 			"trip_completed",
 			"Operation is not allowed for a completed trip",
 		)
+	case errors.Is(err, service.ErrIdempotencyConflict):
+		writeProblem(
+			w, r,
+			http.StatusConflict,
+			"https://tripgo.example/problems/idempotency-conflict",
+			"Idempotency conflict",
+			"idempotency_conflict",
+			"Idempotency-Key was already used with a different request body",
+		)
 	default:
 		writeProblem(
 			w, r,
