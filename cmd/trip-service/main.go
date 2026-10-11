@@ -9,7 +9,6 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
-	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
@@ -37,7 +36,6 @@ func main() {
 	if err != nil {
 		log.Fatalf("failed to connect to database: %v", err)
 	}
-	defer pool.Close()
 
 	log.Println("database connection pool established successfully")
 
@@ -73,10 +71,10 @@ func main() {
 	srv := &http.Server{
 		Addr:              cfg.HTTPAddr,
 		Handler:           r,
-		ReadTimeout:       5 * time.Second,
-		ReadHeaderTimeout: 2 * time.Second,
-		WriteTimeout:      10 * time.Second,
-		IdleTimeout:       120 * time.Second,
+		ReadTimeout:       cfg.HTTPReadTimeout,
+		ReadHeaderTimeout: cfg.HTTPReadHeaderTimeout,
+		WriteTimeout:      cfg.HTTPWriteTimeout,
+		IdleTimeout:       cfg.HTTPIdleTimeout,
 	}
 
 	go func() {
@@ -88,7 +86,7 @@ func main() {
 	log.Printf("trip-service is listening on %s", cfg.HTTPAddr)
 
 	stop := make(chan os.Signal, 1)
-	signal.Notify(stop, os.Interrupt, syscall.SIGTERM)
+	signal.Notify(stop, os.Interrupt, syscall.SIGTERM, syscall.SIGINT)
 
 	sig := <-stop
 	log.Printf("received shutdown signal: %v, gracefully stopping server...", sig)
@@ -96,11 +94,21 @@ func main() {
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), cfg.ShutdownTimeout)
 	defer shutdownCancel()
 
-	if err := srv.Shutdown(shutdownCtx); err != nil {
-		log.Printf("http server graceful shutdown failed: %v", err)
-	} else {
-		log.Println("http server gracefully stopped")
-	}
+	shutdownDone := make(chan struct{})
 
-	log.Println("trip-service exited cleanly")
+	go func() {
+		defer close(shutdownDone)
+		if err := srv.Shutdown(shutdownCtx); err != nil {
+			log.Printf("http server graceful shutdown failed: %v", err)
+		}
+		pool.Close()
+	}()
+
+	select {
+	case <-shutdownDone:
+		log.Println("http server gracefully stopped")
+	case <-shutdownCtx.Done():
+		log.Printf("shutdown timeout (%v) exceeded, forcing exit", cfg.ShutdownTimeout)
+		os.Exit(1)
+	}
 }

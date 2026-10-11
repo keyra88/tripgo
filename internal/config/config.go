@@ -10,10 +10,14 @@ import (
 )
 
 type Config struct {
-	HTTPAddr        string
-	DatabaseURL     string
-	LogLevel        string
-	ShutdownTimeout time.Duration
+	HTTPAddr              string
+	DatabaseURL           string
+	LogLevel              string
+	ShutdownTimeout       time.Duration
+	HTTPReadTimeout       time.Duration
+	HTTPReadHeaderTimeout time.Duration
+	HTTPWriteTimeout      time.Duration
+	HTTPIdleTimeout       time.Duration
 
 	DBMaxConns        int32
 	DBMinConns        int32
@@ -39,6 +43,26 @@ func Load() (*Config, error) {
 	shutdownTimeout, err := time.ParseDuration(getEnv("SHUTDOWN_TIMEOUT", "10s"))
 	if err != nil {
 		return nil, fmt.Errorf("parse SHUTDOWN_TIMEOUT: %w", err)
+	}
+
+	httpReadTimeout, err := time.ParseDuration(getEnv("HTTP_READ_TIMEOUT", "5s"))
+	if err != nil {
+		return nil, fmt.Errorf("parse HTTP_READ_TIMEOUT: %w", err)
+	}
+
+	httpReadHeaderTimeout, err := time.ParseDuration(getEnv("HTTP_READ_HEADER_TIMEOUT", "2s"))
+	if err != nil {
+		return nil, fmt.Errorf("parse HTTP_READ_HEADER_TIMEOUT: %w", err)
+	}
+
+	httpWriteTimeout, err := time.ParseDuration(getEnv("HTTP_WRITE_TIMEOUT", "10s"))
+	if err != nil {
+		return nil, fmt.Errorf("parse HTTP_WRITE_TIMEOUT: %w", err)
+	}
+
+	httpIdleTimeout, err := time.ParseDuration(getEnv("HTTP_IDLE_TIMEOUT", "120s"))
+	if err != nil {
+		return nil, fmt.Errorf("parse HTTP_IDLE_TIMEOUT: %w", err)
 	}
 
 	maxConns, err := parseEnvInt32("DATABASE_MAX_CONNS", 10)
@@ -67,10 +91,15 @@ func Load() (*Config, error) {
 	}
 
 	return &Config{
-		HTTPAddr:          httpAddr,
-		DatabaseURL:       dbURL,
-		LogLevel:          getEnv("LOG_LEVEL", "info"),
-		ShutdownTimeout:   shutdownTimeout,
+		HTTPAddr:              httpAddr,
+		DatabaseURL:           dbURL,
+		LogLevel:              getEnv("LOG_LEVEL", "info"),
+		ShutdownTimeout:       shutdownTimeout,
+		HTTPReadTimeout:       httpReadTimeout,
+		HTTPReadHeaderTimeout: httpReadHeaderTimeout,
+		HTTPWriteTimeout:      httpWriteTimeout,
+		HTTPIdleTimeout:       httpIdleTimeout,
+
 		DBMaxConns:        maxConns,
 		DBMinConns:        minConns,
 		DBMaxConnLifetime: maxConnLifetime,
