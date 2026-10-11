@@ -1,9 +1,11 @@
 package handler
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -15,12 +17,14 @@ type Handler struct {
 	api.Unimplemented
 	service *service.TripService
 	pool    *pgxpool.Pool
+	queryTimeout time.Duration
 }
 
-func New(service *service.TripService, pool *pgxpool.Pool) *Handler {
+func New(service *service.TripService, pool *pgxpool.Pool, queryTimeout time.Duration) *Handler {
 	return &Handler{
 		service: service,
 		pool:    pool,
+		queryTimeout: queryTimeout,
 	}
 }
 
@@ -84,7 +88,10 @@ func (h *Handler) GetTrip(w http.ResponseWriter, r *http.Request, tripId api.Tri
 		return
 	}
 
-	trip, err := h.service.GetTrip(r.Context(), tripId)
+	ctx, cancel := context.WithTimeout(r.Context(), h.queryTimeout)
+	defer cancel()
+
+	trip, err := h.service.GetTrip(ctx, tripId)
 	if err != nil {
 		handleError(w, r, err)
 		return
@@ -119,8 +126,11 @@ func (h *Handler) Health(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) Ready(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-	if err := h.pool.Ping(r.Context()); err != nil {
+	pingCtx, cancel := context.WithTimeout(r.Context(), h.queryTimeout)
+	defer cancel()
+
+	if err := h.pool.Ping(pingCtx); err != nil {
+		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusServiceUnavailable)
 		_ = json.NewEncoder(w).Encode(api.HealthResponse{Status: api.Unavailable})
 		return

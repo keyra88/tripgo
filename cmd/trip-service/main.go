@@ -39,10 +39,10 @@ func main() {
 
 	log.Println("database connection pool established successfully")
 
-	txMgr := txmanager.New(pool)
+	txMgr := txmanager.New(pool, cfg.DBQueryTimeout)
 	repo := repository.New(pool)
 	tripService := service.NewTripService(repo, txMgr)
-	tripHandler := handler.New(tripService, pool)
+	tripHandler := handler.New(tripService, pool, cfg.DBQueryTimeout)
 
 	r := chi.NewRouter()
 	r.Use(middleware.RequestID)
