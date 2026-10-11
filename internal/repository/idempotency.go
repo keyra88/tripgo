@@ -60,6 +60,11 @@ func (r *Repository) SaveIdempotencyRecord(ctx context.Context, rec *Idempotency
 		Insert("idempotency_keys").
 		Columns("key", "request_hash", "trip_id", "created_at", "expires_at").
 		Values(rec.Key, rec.RequestHash, rec.TripID, rec.CreatedAt, rec.ExpiresAt).
+		Suffix(`ON CONFLICT (key) DO UPDATE SET
+			request_hash = EXCLUDED.request_hash,
+			trip_id = EXCLUDED.trip_id,
+			created_at = EXCLUDED.created_at,
+			expires_at = EXCLUDED.expires_at`).
 		ToSql()
 	if err != nil {
 		return err

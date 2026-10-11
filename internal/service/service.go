@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"strconv"
 	"time"
 
 	"github.com/google/uuid"
@@ -27,13 +28,13 @@ func NewTripService(repo *repository.Repository, txManager txmanager.TxManager) 
 
 func computeRequestHash(data api.TripData) string {
 	h := sha256.New()
-	fmt.Fprintf(h, "%s:%s:%.6f:%.6f:%.6f:%.6f:%d",
+	fmt.Fprintf(h, "%s:%s:%s:%s:%s:%s:%d",
 		data.UserId.String(),
 		data.DriverId.String(),
-		data.StartPoint.Latitude,
-		data.StartPoint.Longitude,
-		data.EndPoint.Latitude,
-		data.EndPoint.Longitude,
+		strconv.FormatFloat(data.StartPoint.Latitude, 'g', -1, 64),
+		strconv.FormatFloat(data.StartPoint.Longitude, 'g', -1, 64),
+		strconv.FormatFloat(data.EndPoint.Latitude, 'g', -1, 64),
+		strconv.FormatFloat(data.EndPoint.Longitude, 'g', -1, 64),
 		data.Price,
 	)
 	return hex.EncodeToString(h.Sum(nil))
