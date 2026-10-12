@@ -40,54 +40,63 @@ func Load() (*Config, error) {
 		return nil, fmt.Errorf("HTTP_ADDR cannot be empty")
 	}
 
-	shutdownTimeout, err := time.ParseDuration(getEnv("SHUTDOWN_TIMEOUT", "10s"))
+	shutdownTimeout, err := parseEnvDuration("SHUTDOWN_TIMEOUT", "10s")
 	if err != nil {
-		return nil, fmt.Errorf("parse SHUTDOWN_TIMEOUT: %w", err)
+		return nil, err
 	}
 
-	httpReadTimeout, err := time.ParseDuration(getEnv("HTTP_READ_TIMEOUT", "5s"))
+	httpReadTimeout, err := parseEnvDuration("HTTP_READ_TIMEOUT", "5s")
 	if err != nil {
-		return nil, fmt.Errorf("parse HTTP_READ_TIMEOUT: %w", err)
+		return nil, err
 	}
 
-	httpReadHeaderTimeout, err := time.ParseDuration(getEnv("HTTP_READ_HEADER_TIMEOUT", "2s"))
+	httpReadHeaderTimeout, err := parseEnvDuration("HTTP_READ_HEADER_TIMEOUT", "2s")
 	if err != nil {
-		return nil, fmt.Errorf("parse HTTP_READ_HEADER_TIMEOUT: %w", err)
+		return nil, err
 	}
 
-	httpWriteTimeout, err := time.ParseDuration(getEnv("HTTP_WRITE_TIMEOUT", "10s"))
+	httpWriteTimeout, err := parseEnvDuration("HTTP_WRITE_TIMEOUT", "10s")
 	if err != nil {
-		return nil, fmt.Errorf("parse HTTP_WRITE_TIMEOUT: %w", err)
+		return nil, err
 	}
 
-	httpIdleTimeout, err := time.ParseDuration(getEnv("HTTP_IDLE_TIMEOUT", "120s"))
+	httpIdleTimeout, err := parseEnvDuration("HTTP_IDLE_TIMEOUT", "120s")
 	if err != nil {
-		return nil, fmt.Errorf("parse HTTP_IDLE_TIMEOUT: %w", err)
+		return nil, err
 	}
 
 	maxConns, err := parseEnvInt32("DATABASE_MAX_CONNS", 10)
 	if err != nil {
 		return nil, fmt.Errorf("parse DATABASE_MAX_CONNS: %w", err)
 	}
+	if maxConns <= 0 {
+		return nil, fmt.Errorf("DATABASE_MAX_CONNS must be positive, got %d", maxConns)
+	}
 
 	minConns, err := parseEnvInt32("DATABASE_MIN_CONNS", 2)
 	if err != nil {
 		return nil, fmt.Errorf("parse DATABASE_MIN_CONNS: %w", err)
 	}
-
-	maxConnLifetime, err := time.ParseDuration(getEnv("DATABASE_MAX_CONN_LIFETIME", "30m"))
-	if err != nil {
-		return nil, fmt.Errorf("parse DATABASE_MAX_CONN_LIFETIME: %w", err)
+	if minConns < 0 {
+		return nil, fmt.Errorf("DATABASE_MIN_CONNS must be non-negative, got %d", minConns)
+	}
+	if minConns > maxConns {
+		return nil, fmt.Errorf("DATABASE_MIN_CONNS (%d) cannot be greater than DATABASE_MAX_CONNS (%d)", minConns, maxConns)
 	}
 
-	connTimeout, err := time.ParseDuration(getEnv("DATABASE_CONNECT_TIMEOUT", "5s"))
+	maxConnLifetime, err := parseEnvDuration("DATABASE_MAX_CONN_LIFETIME", "30m")
 	if err != nil {
-		return nil, fmt.Errorf("parse DATABASE_CONNECT_TIMEOUT: %w", err)
+		return nil, err
 	}
 
-	queryTimeout, err := time.ParseDuration(getEnv("DATABASE_QUERY_TIMEOUT", "3s"))
+	connTimeout, err := parseEnvDuration("DATABASE_CONNECT_TIMEOUT", "5s")
 	if err != nil {
-		return nil, fmt.Errorf("parse DATABASE_QUERY_TIMEOUT: %w", err)
+		return nil, err
+	}
+
+	queryTimeout, err := parseEnvDuration("DATABASE_QUERY_TIMEOUT", "3s")
+	if err != nil {
+		return nil, err
 	}
 
 	return &Config{
@@ -113,6 +122,18 @@ func getEnv(key, def string) string {
 		return val
 	}
 	return def
+}
+
+func parseEnvDuration(key, def string) (time.Duration, error) {
+	val := getEnv(key, def)
+	d, err := time.ParseDuration(val)
+	if err != nil {
+		return 0, fmt.Errorf("parse %s: %w", key, err)
+	}
+	if d <= 0 {
+		return 0, fmt.Errorf("%s must be positive, got %v", key, d)
+	}
+	return d, nil
 }
 
 func parseEnvInt32(key string, def int32) (int32, error) {

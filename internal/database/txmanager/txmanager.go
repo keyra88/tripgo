@@ -51,10 +51,18 @@ func (tm *txManager) Do(ctx context.Context, fn func(ctx context.Context) error)
 			rollbackCtx, rollbackCancel := context.WithTimeout(context.Background(), tm.queryTimeout)
 			_ = tx.Rollback(rollbackCtx)
 			rollbackCancel()
+		} else if ctxErr := ctx.Err(); ctxErr != nil {
+			err = fmt.Errorf("transaction aborted, context canceled: %w", ctxErr)
+			rollbackCtx, rollbackCancel := context.WithTimeout(context.Background(), tm.queryTimeout)
+			_ = tx.Rollback(rollbackCtx)
+			rollbackCancel()
 		} else {
-			commitCtx, commitCancel := context.WithTimeout(context.Background(), tm.queryTimeout)
+			commitCtx, commitCancel := context.WithTimeout(ctx, tm.queryTimeout)
 			if commitErr := tx.Commit(commitCtx); commitErr != nil {
 				err = fmt.Errorf("commit transaction: %w", commitErr)
+				rollbackCtx, rollbackCancel := context.WithTimeout(context.Background(), tm.queryTimeout)
+				_ = tx.Rollback(rollbackCtx)
+				rollbackCancel()
 			}
 			commitCancel()
 		}

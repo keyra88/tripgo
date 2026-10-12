@@ -95,11 +95,12 @@ func (h *Handler) Health(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) Ready(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+
 	pingCtx, cancel := context.WithTimeout(r.Context(), h.queryTimeout)
 	defer cancel()
 
 	if err := h.pool.Ping(pingCtx); err != nil {
-		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusServiceUnavailable)
 		_ = json.NewEncoder(w).Encode(api.HealthResponse{Status: api.Unavailable})
 		return
