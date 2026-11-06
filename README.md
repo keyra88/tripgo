@@ -52,6 +52,11 @@ docker run -d --name tripgo-app \
 | `DATABASE_MAX_CONN_LIFETIME` | Максимальное время жизни соединения | `30m` |
 | `DATABASE_CONNECT_TIMEOUT` | Таймаут на установку соединения с БД | `5s` |
 | `DATABASE_QUERY_TIMEOUT` | Таймаут выполнения транзакций и одиночных запросов к БД | `3s` |
+| `OTEL_SERVICE_NAME` | Имя сервиса для OpenTelemetry | `trip-service` |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | HTTP-эндпоинт OTel Collector | `http://localhost:22318` |
+| `OTEL_EXPORTER_OTLP_PROTOCOL` | Протокол экспорта OTLP | `http/protobuf` |
+| `OTEL_RESOURCE_ATTRIBUTES` | Дополнительные атрибуты ресурса OTel | `service.namespace=tripgo,deployment.environment=local` |
+| `OTEL_TRACES_SAMPLER` | Стратегия сэмплирования трейсов | `parentbased_always_on` |
 
 ---
 
@@ -98,7 +103,7 @@ docker run -d --name tripgo-app \
 
 ### 3.5. Перехват паник по стандарту RFC 9457 Problem Details
 
-* Сервис использует кастомный middleware `handler.PanicRecoverer`, который перехватывает необработанные паники, логирует стектрейс и возвращает клиенту ответ `500 Internal Server Error` с заголовком `Content-Type: application/problem+json` и кодом `"internal_error"` в строгом соответствии с контрактом OpenAPI.
+* Сервис использует кастомный middleware `middleware.Recoverer`, который перехватывает необработанные паники, логирует стектрейс и возвращает клиенту ответ `500 Internal Server Error` с заголовком `Content-Type: application/problem+json` и кодом `"internal_error"` в строгом соответствии с контрактом OpenAPI.
 
 ### 3.6. Запрет двух активных поездок на одного водителя
 
@@ -129,8 +134,81 @@ docker run -d --name tripgo-app \
 
 ## 4. Команды Makefile
 
-* `make generate` — генерация структур и роутера из `contracts/openapi/trip-service.openapi.yaml` через `oapi-codegen`.
+* `make generate` — кодогенерация роутера OpenAPI (`oapi-codegen`) и моков (`mockgen` через `go:generate`).
 * `make migrate` — накат всех миграций базы данных (`goose up`).
 * `make migrate-down` — откат последней миграции базы данных (`goose down`).
 * `make run` — компиляция и запуск сервиса локально.
-* `make test` — запуск полного набора unit/integration тестов с детектором гонок (`go test -v -race ./...`).
+* `make test` — запуск модульных тестов с детектором гонок и расчётом покрытия пакетов `domain` и `usecase` (`Total coverage >= 50%`).
+* `make test-integration` — запуск интеграционных тестов с реальной СУБД PostgreSQL.
+* `make lint` — запуск полного набора линтеров (`golangci-lint`) со строгой проверкой архитектурных слоёв через `depguard`.
+
+---
+
+## 5. Архитектура сервиса
+
+Сервис построен по принципам чистой архитектуры (Clean Architecture / Ports & Adapters). Кодовая база разделена на независимые слои с направлением зависимостей строго **снаружи внутрь**.
+
+```
+                              ┌────────────────────────┐
+                              │    cmd/trip-service    │  (Composition Root / main)
+                              └───────────┬────────────┘
+                                          │
+                   ┌──────────────────────┴──────────────────────┐
+                   ▼                                             ▼
+       ┌────────────────────────┐                   ┌────────────────────────┐
+       │     internal/http      │                   │  internal/repository   │
+       │  (Транспортный слой)   │                   │  (Инфраструктура БД)   │
+       └───────────┬────────────┘                   └────────────┬───────────┘
+                   │                                             │
+                   │  зависит от интерфейсов usecase             │  реализует интерфейсы
+                   ▼                                             │  репозиториев
+       ┌────────────────────────┐                                │
+       │    internal/usecase    │◄───────────────────────────────┘
+       │ (Бизнес-сценарии /     │
+       │   порты-контракты)     │
+       └───────────┬────────────┘
+                   │
+                   │  чистая бизнес-логика
+                   ▼
+       ┌────────────────────────┐
+       │    internal/domain     │  (Сущности, методы перехода состояний,
+       │   (Ядро приложения)    │   доменные ошибки и валидация)
+       └────────────────────────┘
+```
+
+### 5.1. Назначение слоёв
+
+| Слой | Путь пакета | Назначение и ответственность |
+|---|---|---|
+| **Domain** | `internal/domain/trip` | Ядро бизнес-логики: сущность `Trip`, правила переходов состояний (`Trip.Finish(at time.Time)`), валидация полей модели (`Trip.Validate()`), доменные ошибки (`ErrTripNotFound`, `ErrTripCompleted`, `ErrDriverBusy`, `ErrInvalidRequest`, `ErrIdempotencyConflict`) и тип ошибки валидации `ValidationError`. Не зависит ни от каких библиотек, фреймворков и инфраструктуры. |
+| **Model** | `internal/model` | Межуровневые типы и структуры данных (`Trip`, `Point`, `Status`, `IdempotencyRecord`), позволяющие слоям обмениваться сущностями без циклических импортов. |
+| **Usecase** | `internal/usecase/trip/{create,get,finish}` | Сценарии использования приложения. Координируют выполнение бизнес-логики: вызывают методы домена, управляют транзакциями через `TxManager`, сохраняют/читают данные через интерфейсы репозиториев, регистрируют бизнес-метрики. |
+| **Transport** | `internal/http/trip/{create,get,finish}` | HTTP-адаптеры: строгая десериализация и валидация JSON-запросов, вызов соответствующего usecase, сериализация ответа. `internal/http/trip/handler.go` объединяет адаптеры в реализацию интерфейса `api.ServerInterface`. |
+| **Error Mapping** | `internal/http/domainerror` | Единая точка трансляции доменных ошибок в структуру RFC 9457 `application/problem+json`. Скрывает внутренние детали инфраструктуры (при 500 никогда не возвращает SQL-ошибки или стектрейсы клиенту). |
+| **Middleware** | `internal/http/middleware` | Фиксированная цепочка промежуточной обработки: `Recover -> Tracing -> Logging -> Metrics -> router`. |
+| **Repository** | `internal/repository/trip` | Адаптер к базе данных PostgreSQL. Реализует интерфейсы, требуемые usecase, с использованием SQL-билдера `squirrel` и пула `pgxpool.Pool`. |
+| **Infrastructure** | `internal/infra/{postgres,telemetry}` | Инфраструктурные компоненты: подключение к PostgreSQL с `otelpgx`, контекстный менеджер транзакций `txmanager.TxManager`, OpenTelemetry SDK (TracerProvider, MeterProvider, OTLP HTTP-экспортеры, контекстный handler для `log/slog`). |
+| **Container** | `internal/container` | Composition Root: явное связывание всех зависимостей сервиса в коде без глобальных переменных, скрытых синглтонов или сторонних DI-библиотек. |
+| **App Entrypoint**| `cmd/trip-service` | Точка входа в приложение: загрузка конфигурации, сборка контейнера, запуск HTTP-сервера и координация Graceful Shutdown по тайм-бюджету. |
+
+### 5.2. Правила зависимостей и контроль через `depguard`
+
+Зависимости направлены исключительно внутрь. Направление импортов контролируется линтером `depguard` в `.golangci.yml`:
+1. `internal/domain`: **запрещено** импортировать `net/http`, `chi`, `pgx`, `squirrel`, `otel`, `api`.
+2. `internal/usecase`: **запрещено** импортировать `net/http`, `chi`, `pgx`, `squirrel`, `api`.
+3. `internal/http/*`: **запрещено** импортировать `internal/repository/*` и `internal/infra/*`.
+
+### 5.3. Расположение интерфейсов
+
+Интерфейсы объявляются на стороне **потребителя** (внутри пакета, которому требуется зависимость), а не на стороне реализации:
+- `internal/usecase/trip/create/contract.go`: интерфейсы `TripRepository` и `TxManager`.
+- `internal/usecase/trip/finish/contract.go`: интерфейсы `TripRepository` и `TxManager`.
+- `internal/usecase/trip/get/contract.go`: интерфейс `TripRepository`.
+- `internal/http/trip/{create,get,finish}/contract.go`: интерфейсы соответствующих сценариев использования.
+- `internal/http/trip/handler.go`: узкий интерфейс `Pinger` (`Ping(ctx context.Context) error`).
+
+**Почему интерфейсы объявлены у потребителя:**
+1. **Принцип инверсии зависимостей (DIP)**: высокоуровневые модули (usecase) не должны зависеть от низкоуровневых модулей (репозиторий PostgreSQL). Оба должны зависеть от абстракций.
+2. **Минимализм и изоляция (ISP)**: каждый юзкейс определяет ровно те методы, которые необходимы для его выполнения. Например, для сценария `get` требуется только `GetTripByID`, поэтому мок в тестах тривиален и не требует реализации методов создания или блокировок.
+3. **Расширяемость**: при добавлении в будущем альтернативного транспорта (например, gRPC или очередей сообщений Kafka) сценарии использования и домен останутся неизменными — новый транспортный адаптер просто обратится к существующим usecase.
+
