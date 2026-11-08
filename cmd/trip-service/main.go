@@ -2,23 +2,16 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"log"
+	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
 
-	"github.com/go-chi/chi/v5"
-	"github.com/go-chi/chi/v5/middleware"
-	"github.com/keyra88/tripgo/api"
 	"github.com/keyra88/tripgo/internal/config"
-	"github.com/keyra88/tripgo/internal/database"
-	"github.com/keyra88/tripgo/internal/database/txmanager"
-	"github.com/keyra88/tripgo/internal/handler"
-	"github.com/keyra88/tripgo/internal/repository"
-	"github.com/keyra88/tripgo/internal/service"
+	"github.com/keyra88/tripgo/internal/container"
 )
 
 func main() {
@@ -27,88 +20,47 @@ func main() {
 		log.Fatalf("failed to load config: %v", err)
 	}
 
-	log.Printf("starting trip-service on %s...", cfg.HTTPAddr)
+	ctx := context.Background()
 
-	ctx, cancel := context.WithTimeout(context.Background(), cfg.DBConnectTimeout)
-	defer cancel()
-
-	pool, err := database.NewPool(ctx, cfg)
+	cnt, err := container.New(ctx, cfg)
 	if err != nil {
-		log.Fatalf("failed to connect to database: %v", err)
+		log.Fatalf("failed to create container: %v", err)
 	}
 
-	log.Println("database connection pool established successfully")
-
-	txMgr := txmanager.New(pool, cfg.DBQueryTimeout)
-	repo := repository.New(pool)
-	tripService := service.NewTripService(repo, txMgr)
-	tripHandler := handler.New(tripService, pool, cfg.DBQueryTimeout)
-
-	r := chi.NewRouter()
-	r.Use(middleware.RequestID)
-	r.Use(middleware.Logger)
-	r.Use(handler.PanicRecoverer)
-
-	api.HandlerWithOptions(tripHandler, api.ChiServerOptions{
-		BaseRouter: r,
-		ErrorHandlerFunc: func(w http.ResponseWriter, req *http.Request, err error) {
-			w.Header().Set("Content-Type", "application/problem+json")
-			w.WriteHeader(http.StatusBadRequest)
-			path := req.URL.Path
-			detail := err.Error()
-			problem := api.Problem{
-				Type:     "https://tripgo.example/problems/invalid-request",
-				Title:    "Invalid request",
-				Status:   http.StatusBadRequest,
-				Code:     "invalid_request",
-				Detail:   &detail,
-				Instance: &path,
-			}
-			_ = json.NewEncoder(w).Encode(problem)
-		},
-	})
-
-	srv := &http.Server{
-		Addr:              cfg.HTTPAddr,
-		Handler:           r,
-		ReadTimeout:       cfg.HTTPReadTimeout,
-		ReadHeaderTimeout: cfg.HTTPReadHeaderTimeout,
-		WriteTimeout:      cfg.HTTPWriteTimeout,
-		IdleTimeout:       cfg.HTTPIdleTimeout,
-	}
+	cnt.Logger.Info("starting trip-service", slog.String("addr", cfg.HTTPAddr))
 
 	go func() {
-		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			log.Fatalf("http server listen failed: %v", err)
+		if err := cnt.Start(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			cnt.Logger.Error("server failed to listen", slog.Any("error", err))
+			os.Exit(1)
 		}
 	}()
-
-	log.Printf("trip-service is listening on %s", cfg.HTTPAddr)
 
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, os.Interrupt, syscall.SIGTERM, syscall.SIGINT)
 
 	sig := <-stop
-	log.Printf("received shutdown signal: %v, gracefully stopping server...", sig)
+	cnt.Logger.Info("received shutdown signal, stopping gracefully...", slog.String("signal", sig.String()))
 
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), cfg.ShutdownTimeout)
-	defer shutdownCancel()
 
-	shutdownDone := make(chan struct{})
-
+	shutdownDone := make(chan error, 1)
 	go func() {
-		defer close(shutdownDone)
-		if err := srv.Shutdown(shutdownCtx); err != nil {
-			log.Printf("http server graceful shutdown failed: %v", err)
-		}
-		pool.Close()
+		shutdownDone <- cnt.Shutdown(shutdownCtx)
 	}()
 
 	select {
-	case <-shutdownDone:
-		log.Println("http server gracefully stopped")
 	case <-shutdownCtx.Done():
-		log.Printf("shutdown timeout (%v) exceeded, forcing exit", cfg.ShutdownTimeout)
+		shutdownCancel()
+		cnt.Logger.Error("shutdown timeout exceeded, force exiting", slog.Duration("timeout", cfg.ShutdownTimeout))
 		os.Exit(1)
+	case err := <-shutdownDone:
+		shutdownCancel()
+		if err != nil {
+			cnt.Logger.Error("graceful shutdown failed", slog.Any("error", err))
+			os.Exit(1)
+		}
 	}
+
+	cnt.Logger.Info("trip-service stopped gracefully")
 }
