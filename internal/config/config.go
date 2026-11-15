@@ -10,6 +10,7 @@ import (
 )
 
 type Config struct {
+	ServiceVersion        string
 	HTTPAddr              string
 	DatabaseURL           string
 	LogLevel              string
@@ -100,6 +101,7 @@ func Load() (*Config, error) {
 	}
 
 	return &Config{
+		ServiceVersion:        getEnv("SERVICE_VERSION", "1.0.0"),
 		HTTPAddr:              httpAddr,
 		DatabaseURL:           dbURL,
 		LogLevel:              getEnv("LOG_LEVEL", "info"),
