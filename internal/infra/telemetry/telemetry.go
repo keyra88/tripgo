@@ -63,7 +63,7 @@ func (h *traceContextHandler) WithGroup(name string) slog.Handler {
 	return &traceContextHandler{handler: h.handler.WithGroup(name)}
 }
 
-func Setup(ctx context.Context, serviceName, logLevel string) (*Telemetry, error) {
+func Setup(ctx context.Context, serviceName, serviceVersion, logLevel string) (*Telemetry, error) {
 	var closers []func(context.Context) error
 	shutdown := func(shutdownCtx context.Context) error {
 		var errs error
@@ -98,6 +98,7 @@ func Setup(ctx context.Context, serviceName, logLevel string) (*Telemetry, error
 	res, err := resource.New(ctx,
 		resource.WithAttributes(
 			semconv.ServiceName(serviceName),
+			semconv.ServiceVersion(serviceVersion),
 			attribute.String("service.namespace", "tripgo"),
 			attribute.String("deployment.environment", "local"),
 		),

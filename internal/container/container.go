@@ -57,7 +57,7 @@ func (r *tripsCompletedRecorder) IncTripsCompleted(ctx context.Context) {
 }
 
 func New(ctx context.Context, cfg *config.Config) (*Container, error) {
-	tel, err := telemetry.Setup(ctx, "trip-service", cfg.LogLevel)
+	tel, err := telemetry.Setup(ctx, "trip-service", cfg.ServiceVersion, cfg.LogLevel)
 	if err != nil {
 		return nil, fmt.Errorf("setup telemetry: %w", err)
 	}
