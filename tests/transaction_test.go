@@ -65,7 +65,11 @@ func TestAtomicRollback(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to connect to database: %v", err)
 	}
-	defer pool.Close()
+	cleanDB(t, pool)
+	t.Cleanup(func() {
+		cleanDB(t, pool)
+		pool.Close()
+	})
 
 	txMgr := transaction.New(pool, cfg.DBQueryTimeout)
 	repo := repotrip.New(pool, cfg.DBQueryTimeout)

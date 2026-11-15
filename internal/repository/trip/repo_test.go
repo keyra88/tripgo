@@ -48,11 +48,24 @@ func getTestPool(t *testing.T) *pgxpool.Pool {
 		t.Fatalf("failed to ping test db: %v", err)
 	}
 
+	cleanDB(t, pool)
+
 	t.Cleanup(func() {
+		cleanDB(t, pool)
 		pool.Close()
 	})
 
 	return pool
+}
+
+func cleanDB(t *testing.T, pool *pgxpool.Pool) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), testQueryTimeout)
+	defer cancel()
+	_, err := pool.Exec(ctx, "TRUNCATE TABLE trip_status_history, idempotency_keys, trips CASCADE;")
+	if err != nil {
+		t.Fatalf("failed to truncate test tables: %v", err)
+	}
 }
 
 func TestRepository_CreateAndGet(t *testing.T) {
@@ -100,7 +113,7 @@ func TestRepository_CreateAndGet(t *testing.T) {
 	secondTrip := &model.Trip{
 		ID:         secondTripID,
 		UserID:     uuid.New(),
-		DriverID:   driverID, 
+		DriverID:   driverID,
 		StartPoint: model.Point{Latitude: 55.75, Longitude: 37.61},
 		EndPoint:   model.Point{Latitude: 55.76, Longitude: 37.62},
 		Price:      2000,
