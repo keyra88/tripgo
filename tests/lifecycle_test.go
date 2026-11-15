@@ -63,7 +63,7 @@ func TestHealthAndReady(t *testing.T) {
 
 	closedPoolCfg, _ := config.Load()
 	closedPool, _ := postgres.NewPool(context.Background(), closedPoolCfg)
-	closedPool.Close() 
+	closedPool.Close()
 	handlerUnavail := triphttp.NewServer(nil, nil, nil, closedPool, cfg.DBQueryTimeout)
 
 	reqUnavail := httptest.NewRequest(http.MethodGet, "/ready", nil)

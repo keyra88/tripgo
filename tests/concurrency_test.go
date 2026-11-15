@@ -51,7 +51,7 @@ func TestConcurrencyDriverConflict(t *testing.T) {
 			}
 			body, _ := json.Marshal(tripReq)
 
-			<-startBarrier 
+			<-startBarrier
 
 			req := httptest.NewRequest(http.MethodPost, "/api/v1/trips", bytes.NewReader(body))
 			req.Header.Set("Content-Type", "application/json")
