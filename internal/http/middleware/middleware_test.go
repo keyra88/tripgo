@@ -7,10 +7,12 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/go-chi/chi/v5"
 	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/codes"
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 	"go.opentelemetry.io/otel/sdk/metric/metricdata"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
@@ -137,5 +139,65 @@ func TestGetRoutePattern_PreRoutingMatching(t *testing.T) {
 
 	if recordedActiveRoute != "/api/v1/trips/{tripId}" {
 		t.Errorf("expected pre-routing pattern '/api/v1/trips/{tripId}', got '%s'", recordedActiveRoute)
+	}
+}
+
+func TestPanicMiddlewareChain(t *testing.T) {
+	spanRecorder := tracetest.NewSpanRecorder()
+	tp := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(spanRecorder))
+	otel.SetTracerProvider(tp)
+
+	metricReader := sdkmetric.NewManualReader()
+	mp := sdkmetric.NewMeterProvider(sdkmetric.WithReader(metricReader))
+	otel.SetMeterProvider(mp)
+
+	meter := mp.Meter("test_panic")
+	duration, _ := meter.Float64Histogram("http.server.request.duration")
+	active, _ := meter.Int64UpDownCounter("http.server.active_requests")
+
+	httpMetrics := &middleware.HTTPMetrics{
+		Duration:       duration,
+		ActiveRequests: active,
+	}
+
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewJSONHandler(&buf, nil))
+
+	panicHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		panic("boom in handler")
+	})
+
+	h := middleware.Recoverer(logger)(
+		middleware.Tracing("trip-service")(
+			middleware.Logging(logger)(
+				middleware.Metrics(httpMetrics)(panicHandler),
+			),
+		),
+	)
+
+	req := httptest.NewRequest(http.MethodGet, "/boom", nil)
+	rr := httptest.NewRecorder()
+
+	h.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusInternalServerError {
+		t.Fatalf("expected status 500, got %d", rr.Code)
+	}
+
+	spans := spanRecorder.Ended()
+	if len(spans) == 0 {
+		t.Fatalf("expected ended span for panic, got 0")
+	}
+	span := spans[0]
+	if span.Status().Code != codes.Error {
+		t.Errorf("expected span status Error, got %v", span.Status().Code)
+	}
+
+	logOut := buf.String()
+	if !strings.Contains(logOut, "panic recovered") {
+		t.Errorf("expected 'panic recovered' in logs, got %s", logOut)
+	}
+	if !strings.Contains(logOut, "request handled") {
+		t.Errorf("expected 'request handled' in logs, got %s", logOut)
 	}
 }

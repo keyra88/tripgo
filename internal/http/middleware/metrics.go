@@ -33,6 +33,19 @@ func Metrics(m *HTTPMetrics) func(http.Handler) http.Handler {
 			ww := wrapResponseWriter(w)
 			start := time.Now()
 
+			defer func() {
+				if rvr := recover(); rvr != nil {
+					durationSec := time.Since(start).Seconds()
+					resolvedRoute := GetRoutePattern(r)
+					m.Duration.Record(r.Context(), durationSec, metric.WithAttributes(
+						attribute.String("http.request.method", r.Method),
+						attribute.String("http.route", resolvedRoute),
+						attribute.Int("http.response.status_code", http.StatusInternalServerError),
+					))
+					panic(rvr)
+				}
+			}()
+
 			next.ServeHTTP(ww, r)
 
 			durationSec := time.Since(start).Seconds()

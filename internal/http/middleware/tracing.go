@@ -23,6 +23,27 @@ func Tracing(serviceName string) func(http.Handler) http.Handler {
 			ctx, span := tracer.Start(ctx, r.Method, trace.WithSpanKind(trace.SpanKindServer))
 			defer span.End()
 
+			if holder, ok := r.Context().Value(panicCtxKey{}).(*panicContextHolder); ok {
+				holder.ctx = ctx
+			}
+
+			defer func() {
+				if rvr := recover(); rvr != nil {
+					route := GetRoutePattern(r)
+					spanName := fmt.Sprintf("%s %s", r.Method, route)
+					span.SetName(spanName)
+
+					span.SetAttributes(
+						semconv.HTTPRequestMethodKey.String(r.Method),
+						semconv.HTTPRoute(route),
+						semconv.HTTPResponseStatusCode(http.StatusInternalServerError),
+						attribute.String("error.type", "panic"),
+					)
+					span.SetStatus(codes.Error, fmt.Sprint(rvr))
+					panic(rvr)
+				}
+			}()
+
 			ww := wrapResponseWriter(w)
 			r = r.WithContext(ctx)
 

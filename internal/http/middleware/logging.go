@@ -12,6 +12,23 @@ func Logging(logger *slog.Logger) func(http.Handler) http.Handler {
 			ww := wrapResponseWriter(w)
 			start := time.Now()
 
+			defer func() {
+				if rvr := recover(); rvr != nil {
+					duration := time.Since(start)
+					route := GetRoutePattern(r)
+					attrs := []slog.Attr{
+						slog.String("method", r.Method),
+						slog.String("route", route),
+						slog.Int("status", http.StatusInternalServerError),
+						slog.Int64("duration_ms", duration.Milliseconds()),
+					}
+					if logger != nil {
+						logger.LogAttrs(r.Context(), slog.LevelError, "request handled", attrs...)
+					}
+					panic(rvr)
+				}
+			}()
+
 			next.ServeHTTP(ww, r)
 
 			duration := time.Since(start)
@@ -25,10 +42,12 @@ func Logging(logger *slog.Logger) func(http.Handler) http.Handler {
 				slog.Int64("duration_ms", duration.Milliseconds()),
 			}
 
-			if status >= 500 {
-				logger.LogAttrs(r.Context(), slog.LevelError, "request handled", attrs...)
-			} else {
-				logger.LogAttrs(r.Context(), slog.LevelInfo, "request handled", attrs...)
+			if logger != nil {
+				if status >= 500 {
+					logger.LogAttrs(r.Context(), slog.LevelError, "request handled", attrs...)
+				} else {
+					logger.LogAttrs(r.Context(), slog.LevelInfo, "request handled", attrs...)
+				}
 			}
 		})
 	}
