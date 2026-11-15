@@ -13,6 +13,12 @@ func GetRoutePattern(r *http.Request) string {
 		if pattern != "" {
 			return pattern
 		}
+		if rctx.Routes != nil {
+			tctx := chi.NewRouteContext()
+			if p := rctx.Routes.Find(tctx, r.Method, r.URL.Path); p != "" {
+				return p
+			}
+		}
 	}
 	return r.URL.Path
 }

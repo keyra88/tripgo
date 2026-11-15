@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/go-chi/chi/v5"
 	"go.opentelemetry.io/otel"
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 	"go.opentelemetry.io/otel/sdk/metric/metricdata"
@@ -111,5 +112,30 @@ func TestTracingAndLoggingAndMetrics(t *testing.T) {
 	logOut := buf.String()
 	if len(logOut) == 0 {
 		t.Errorf("expected log output, got empty")
+	}
+}
+
+func TestGetRoutePattern_PreRoutingMatching(t *testing.T) {
+	r := chi.NewRouter()
+
+	var recordedActiveRoute string
+	r.Use(func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+			recordedActiveRoute = middleware.GetRoutePattern(req)
+			next.ServeHTTP(w, req)
+		})
+	})
+
+	r.Get("/api/v1/trips/{tripId}", func(w http.ResponseWriter, req *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/trips/123e4567-e89b-12d3-a456-426614174000", nil)
+	rr := httptest.NewRecorder()
+
+	r.ServeHTTP(rr, req)
+
+	if recordedActiveRoute != "/api/v1/trips/{tripId}" {
+		t.Errorf("expected pre-routing pattern '/api/v1/trips/{tripId}', got '%s'", recordedActiveRoute)
 	}
 }
