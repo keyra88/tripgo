@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"time"
 
@@ -17,18 +18,34 @@ import (
 type Handler struct {
 	uc           usecase
 	queryTimeout time.Duration
+	logger       *slog.Logger
 }
 
-func New(uc usecase, queryTimeout time.Duration) *Handler {
+func New(uc usecase, queryTimeout time.Duration, logger *slog.Logger) *Handler {
 	return &Handler{
 		uc:           uc,
 		queryTimeout: queryTimeout,
+		logger:       logger,
+	}
+}
+
+func (h *Handler) logError(ctx context.Context, msg string, err error) {
+	if h.logger == nil {
+		return
+	}
+	status, _ := domainerror.Problem(err)
+	if status >= 500 {
+		h.logger.ErrorContext(ctx, msg, slog.String("error", err.Error()))
+	} else {
+		h.logger.WarnContext(ctx, msg, slog.String("error", err.Error()))
 	}
 }
 
 func (h *Handler) Handle(w http.ResponseWriter, r *http.Request, tripID api.TripId) {
 	if tripID == uuid.Nil {
-		domainerror.Write(w, r, fmt.Errorf("%w: invalid trip id", domain.ErrInvalidRequest))
+		err := fmt.Errorf("%w: invalid trip id", domain.ErrInvalidRequest)
+		h.logError(r.Context(), "invalid get trip request", err)
+		domainerror.Write(w, r, err)
 		return
 	}
 
@@ -41,6 +58,7 @@ func (h *Handler) Handle(w http.ResponseWriter, r *http.Request, tripID api.Trip
 
 	trip, err := h.uc.Execute(ctx, tripID)
 	if err != nil {
+		h.logError(r.Context(), "get trip usecase failed", err)
 		domainerror.Write(w, r, err)
 		return
 	}

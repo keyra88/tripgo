@@ -41,7 +41,7 @@ func TestHandler_Handle(t *testing.T) {
 		uc := NewMockusecase(ctrl)
 		uc.EXPECT().Execute(gomock.Any(), tripID).Return(finishedTrip, nil)
 
-		h := finish.New(uc)
+		h := finish.New(uc, nil)
 
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/trips/"+tripID.String()+"/finish", nil)
 		rr := httptest.NewRecorder()
@@ -70,7 +70,7 @@ func TestHandler_Handle(t *testing.T) {
 		uc := NewMockusecase(ctrl)
 		uc.EXPECT().Execute(gomock.Any(), tripID).Return(nil, domain.ErrTripCompleted)
 
-		h := finish.New(uc)
+		h := finish.New(uc, nil)
 
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/trips/"+tripID.String()+"/finish", nil)
 		rr := httptest.NewRecorder()
@@ -94,7 +94,7 @@ func TestHandler_Handle(t *testing.T) {
 		uc := NewMockusecase(ctrl)
 		uc.EXPECT().Execute(gomock.Any(), tripID).Return(nil, domain.ErrTripNotFound)
 
-		h := finish.New(uc)
+		h := finish.New(uc, nil)
 
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/trips/"+tripID.String()+"/finish", nil)
 		rr := httptest.NewRecorder()
@@ -116,7 +116,7 @@ func TestHandler_Handle(t *testing.T) {
 		defer ctrl.Finish()
 
 		uc := NewMockusecase(ctrl)
-		h := finish.New(uc)
+		h := finish.New(uc, nil)
 
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/trips/00000000-0000-0000-0000-000000000000/finish", nil)
 		rr := httptest.NewRecorder()

@@ -4,8 +4,10 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -55,7 +57,7 @@ func TestHandler_Handle(t *testing.T) {
 		uc := NewMockusecase(ctrl)
 		uc.EXPECT().Execute(gomock.Any(), gomock.Any()).Return(validCreatedTrip, false, nil)
 
-		h := create.New(uc)
+		h := create.New(uc, nil)
 
 		bodyBytes, _ := json.Marshal(validBody)
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/trips", bytes.NewReader(bodyBytes))
@@ -79,7 +81,7 @@ func TestHandler_Handle(t *testing.T) {
 		uc := NewMockusecase(ctrl)
 		uc.EXPECT().Execute(gomock.Any(), gomock.Any()).Return(validCreatedTrip, true, nil)
 
-		h := create.New(uc)
+		h := create.New(uc, nil)
 
 		bodyBytes, _ := json.Marshal(validBody)
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/trips", bytes.NewReader(bodyBytes))
@@ -98,7 +100,7 @@ func TestHandler_Handle(t *testing.T) {
 		defer ctrl.Finish()
 
 		uc := NewMockusecase(ctrl)
-		h := create.New(uc)
+		h := create.New(uc, nil)
 
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/trips", bytes.NewReader([]byte("{invalid-json")))
 		rr := httptest.NewRecorder()
@@ -122,7 +124,7 @@ func TestHandler_Handle(t *testing.T) {
 		uc := NewMockusecase(ctrl)
 		uc.EXPECT().Execute(gomock.Any(), gomock.Any()).Return(nil, false, domain.ErrDriverBusy)
 
-		h := create.New(uc)
+		h := create.New(uc, nil)
 
 		bodyBytes, _ := json.Marshal(validBody)
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/trips", bytes.NewReader(bodyBytes))
@@ -147,7 +149,7 @@ func TestHandler_Handle(t *testing.T) {
 		uc := NewMockusecase(ctrl)
 		uc.EXPECT().Execute(gomock.Any(), gomock.Any()).Return(nil, false, errors.New("secret sql db crash"))
 
-		h := create.New(uc)
+		h := create.New(uc, nil)
 
 		bodyBytes, _ := json.Marshal(validBody)
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/trips", bytes.NewReader(bodyBytes))
@@ -165,6 +167,31 @@ func TestHandler_Handle(t *testing.T) {
 		}
 		if prob.Detail != nil {
 			t.Errorf("expected detail to be nil for 500, got %v", *prob.Detail)
+		}
+	})
+
+	t.Run("usecase error is logged by handler", func(t *testing.T) {
+		ctrl := gomock.NewController(t)
+		defer ctrl.Finish()
+
+		uc := NewMockusecase(ctrl)
+		uc.EXPECT().Execute(gomock.Any(), gomock.Any()).Return(nil, false, domain.ErrDriverBusy)
+
+		var buf bytes.Buffer
+		logger := slog.New(slog.NewJSONHandler(&buf, nil))
+		h := create.New(uc, logger)
+
+		bodyBytes, _ := json.Marshal(validBody)
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/trips", bytes.NewReader(bodyBytes))
+		rr := httptest.NewRecorder()
+
+		h.Handle(rr, req, api.CreateTripParams{})
+
+		if rr.Code != http.StatusConflict {
+			t.Fatalf("expected status 409, got %d", rr.Code)
+		}
+		if !strings.Contains(buf.String(), "create trip usecase failed") {
+			t.Errorf("expected error log, got: %s", buf.String())
 		}
 	})
 }

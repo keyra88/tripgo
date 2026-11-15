@@ -41,7 +41,7 @@ func TestHandler_Handle(t *testing.T) {
 		uc := NewMockusecase(ctrl)
 		uc.EXPECT().Execute(gomock.Any(), tripID).Return(validTrip, nil)
 
-		h := get.New(uc, testQueryTimeout)
+		h := get.New(uc, testQueryTimeout, nil)
 
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/trips/"+tripID.String(), nil)
 		rr := httptest.NewRecorder()
@@ -65,7 +65,7 @@ func TestHandler_Handle(t *testing.T) {
 		defer ctrl.Finish()
 
 		uc := NewMockusecase(ctrl)
-		h := get.New(uc, testQueryTimeout)
+		h := get.New(uc, testQueryTimeout, nil)
 
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/trips/00000000-0000-0000-0000-000000000000", nil)
 		rr := httptest.NewRecorder()
@@ -89,7 +89,7 @@ func TestHandler_Handle(t *testing.T) {
 		uc := NewMockusecase(ctrl)
 		uc.EXPECT().Execute(gomock.Any(), tripID).Return(nil, domain.ErrTripNotFound)
 
-		h := get.New(uc, testQueryTimeout)
+		h := get.New(uc, testQueryTimeout, nil)
 
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/trips/"+tripID.String(), nil)
 		rr := httptest.NewRecorder()

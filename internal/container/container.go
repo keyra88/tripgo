@@ -80,9 +80,9 @@ func New(ctx context.Context, cfg *config.Config) (*Container, error) {
 	getUC := getuc.New(repo, tel.Logger)
 	finishUC := finishuc.New(repo, repo, txMgr, completedRec, tel.Logger)
 
-	createH := createhttp.New(createUC)
-	getH := gethttp.New(getUC, cfg.DBQueryTimeout)
-	finishH := finishhttp.New(finishUC)
+	createH := createhttp.New(createUC, tel.Logger)
+	getH := gethttp.New(getUC, cfg.DBQueryTimeout, tel.Logger)
+	finishH := finishhttp.New(finishUC, tel.Logger)
 	serverH := triphttp.NewServer(createH, getH, finishH, pool, cfg.DBQueryTimeout)
 
 	r := chi.NewRouter()

@@ -1,8 +1,10 @@
 package finish
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net/http"
 
 	"github.com/google/uuid"
@@ -13,21 +15,37 @@ import (
 )
 
 type Handler struct {
-	uc usecase
+	uc     usecase
+	logger *slog.Logger
 }
 
-func New(uc usecase) *Handler {
-	return &Handler{uc: uc}
+func New(uc usecase, logger *slog.Logger) *Handler {
+	return &Handler{uc: uc, logger: logger}
+}
+
+func (h *Handler) logError(ctx context.Context, msg string, err error) {
+	if h.logger == nil {
+		return
+	}
+	status, _ := domainerror.Problem(err)
+	if status >= 500 {
+		h.logger.ErrorContext(ctx, msg, slog.String("error", err.Error()))
+	} else {
+		h.logger.WarnContext(ctx, msg, slog.String("error", err.Error()))
+	}
 }
 
 func (h *Handler) Handle(w http.ResponseWriter, r *http.Request, tripID api.TripId) {
 	if tripID == uuid.Nil {
-		domainerror.Write(w, r, fmt.Errorf("%w: invalid trip id", domain.ErrInvalidRequest))
+		err := fmt.Errorf("%w: invalid trip id", domain.ErrInvalidRequest)
+		h.logError(r.Context(), "invalid finish trip request", err)
+		domainerror.Write(w, r, err)
 		return
 	}
 
 	trip, err := h.uc.Execute(r.Context(), tripID)
 	if err != nil {
+		h.logError(r.Context(), "finish trip usecase failed", err)
 		domainerror.Write(w, r, err)
 		return
 	}
