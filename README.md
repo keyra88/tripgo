@@ -2,11 +2,16 @@
 
 ## 1. Инструкция по запуску
 
+Для локального запуска нужны Go 1.27.1 или новее, `make` и `tripgoctl`.
+Для `make lint` нужен `golangci-lint` v2, собранный с поддержкой Go 1.27.
+
 ### 1.1. Локальный запуск через `tripgoctl` и `make`
 
 ```bash
-# 1. Запуск окружения с PostgreSQL
+# 1. Запуск PostgreSQL, телеметрии и заглушки Push Service
+tripgoctl cluster start           # один раз на машине
 tripgoctl environment start
+tripgoctl connect
 
 # 2. Применение миграций базы данных
 make migrate
@@ -15,7 +20,8 @@ make migrate
 make run
 ```
 
-Сервис слушает HTTP-запросы на адресе `http://localhost:8080`.
+Сервис читает адреса зависимостей из сгенерированного `.env`. По умолчанию
+HTTP-сервер слушает `:8080`.
 
 ### 1.2. Запуск в Docker
 
@@ -25,12 +31,11 @@ make run
 # Сборка образа
 docker build -f deploy/Dockerfile -t tripgo-service:local .
 
-# Запуск контейнера в сети окружения
+# В .env.docker укажите адреса зависимостей, доступные из контейнера.
+# На Docker Desktop для сервисов на хосте используйте host.docker.internal.
 docker run -d --name tripgo-app \
   -p 8080:8080 \
-  -e DATABASE_URL="postgres://tripgo:tripgo@host.docker.internal:22032/tripgo?sslmode=disable" \
-  -e HTTP_ADDR=":8080" \
-  -e SHUTDOWN_TIMEOUT="10s" \
+  --env-file .env.docker \
   tripgo-service:local
 ```
 
@@ -40,13 +45,14 @@ docker run -d --name tripgo-app \
 
 | Переменная | Описание | Значение по умолчанию / Пример |
 |---|---|---|
+| `LOG_LEVEL` | Минимальный уровень логов | `info` |
 | `HTTP_ADDR` | Сетевой адрес и порт HTTP-сервера | `:8080` |
 | `SHUTDOWN_TIMEOUT` | Общий бюджет времени на полную остановку сервиса (Graceful Shutdown) | `10s` |
 | `HTTP_READ_TIMEOUT` | Таймаут чтения запроса HTTP-сервером | `5s` |
 | `HTTP_READ_HEADER_TIMEOUT` | Таймаут чтения заголовков HTTP-сервером | `2s` |
 | `HTTP_WRITE_TIMEOUT` | Таймаут записи ответа HTTP-сервером | `10s` |
 | `HTTP_IDLE_TIMEOUT` | Таймаут ожидания в режиме keep-alive | `120s` |
-| `DATABASE_URL` | Строка подключения к PostgreSQL | `postgres://tripgo:tripgo@localhost:22032/tripgo?sslmode=disable` |
+| `DATABASE_URL` | Строка подключения к PostgreSQL | Обязательная, из `.env` |
 | `DATABASE_MAX_CONNS` | Максимальное количество соединений в пуле | `10` |
 | `DATABASE_MIN_CONNS` | Минимальное количество поддерживаемых соединений в пуле | `2` |
 | `DATABASE_MAX_CONN_LIFETIME` | Максимальное время жизни соединения | `30m` |
@@ -54,7 +60,7 @@ docker run -d --name tripgo-app \
 | `DATABASE_QUERY_TIMEOUT` | Таймаут выполнения транзакций и одиночных запросов к БД | `3s` |
 | `SERVICE_VERSION` | Версия сборки приложения для атрибута ресурса OTel (`service.version`) | `1.0.0` |
 | `OTEL_SERVICE_NAME` | Имя сервиса для OpenTelemetry | `trip-service` |
-| `OTEL_EXPORTER_OTLP_ENDPOINT` | HTTP-эндпоинт OTel Collector | `http://localhost:22318` |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | HTTP-эндпоинт OTel Collector | Из `.env` |
 | `OTEL_EXPORTER_OTLP_PROTOCOL` | Протокол экспорта OTLP | `http/protobuf` |
 | `OTEL_RESOURCE_ATTRIBUTES` | Дополнительные атрибуты ресурса OTel | `service.namespace=tripgo,deployment.environment=local` |
 | `OTEL_TRACES_SAMPLER` | Стратегия сэмплирования трейсов | `parentbased_always_on` |
@@ -82,7 +88,7 @@ docker run -d --name tripgo-app \
 * **Реализация**:
   - Контекстный подход: открытая транзакция `pgx.Tx` сохраняется в `context.Context` по закрытому ключу `txKey`.
   - Репозиторий прозрачно извлекает исполнителя (`txmanager.ExtractTx(ctx)`): если транзакция присутствует в контексте, запросы выполняются внутри нее; если нет — напрямую через пул `pgxpool.Pool`. Репозиторий не принимает транзакцию отдельным аргументом.
-  - **Надёжный `Rollback` и `Commit`**: откат выполняется с независимым контекстом `context.Background()` и таймаутом `DATABASE_QUERY_TIMEOUT`, гарантируя освобождение ресурсов в СУБД даже при отмене клиентского запроса. Коммит выполняется строго в контексте запроса (`context.WithTimeout(ctx, DATABASE_QUERY_TIMEOUT)`); если контекст запроса уже отменён, транзакция не коммитится, а откатывается.
+  - **Надёжный `Rollback` и `Commit`**: откат выполняется с контекстом `context.WithoutCancel(ctx)` и таймаутом `DATABASE_QUERY_TIMEOUT`, гарантируя освобождение ресурсов в СУБД даже при отмене клиентского запроса. Коммит выполняется строго в контексте запроса (`context.WithTimeout(ctx, DATABASE_QUERY_TIMEOUT)`); если контекст запроса уже отменён, транзакция не коммитится, а откатывается.
   - **Поддержка вложенности**: при повторном вызове `Do` внутри уже существующей транзакции менеджер переиспользует текущую транзакцию, не открывая вторую.
   - Одиночные запросы вне транзакции (`GET /api/v1/trips/{tripId}` и `/ready`) также явно ограничены таймаутом `DATABASE_QUERY_TIMEOUT`.
 
@@ -91,7 +97,8 @@ docker run -d --name tripgo-app \
 * Сервис слушает сигналы `SIGINT` и `SIGTERM`.
 * Процедура завершения запускается в фоновой горутине:
   1. `srv.Shutdown(shutdownCtx)` прекращает приём новых подключений и ожидает завершения текущих запросов.
-  2. `pool.Close()` закрывает все соединения с базой данных.
+  2. Сканер останавливается и закрывает канал. Воркеры завершают обработку очереди в оставшееся время.
+  3. Закрываются HTTP-клиент Push Service, телеметрия и пул БД.
 * Главный поток через `select` контролирует общий бюджет времени `SHUTDOWN_TIMEOUT`. Если СУБД или запросы зависли дольше заданного таймаута, вызывается `os.Exit(1)`, гарантируя, что процесс завершится принудительно ровно по истечении бюджета.
 
 ### 3.4. Строгая валидация входящих тел запросов
@@ -140,20 +147,70 @@ docker run -d --name tripgo-app \
 
 ---
 
-## 4. Команды Makefile
+## 4. Опрос устаревших поездок
+
+```text
+PostgreSQL → сканер по тикеру → ограниченная FIFO-очередь → воркеры → Push Service
+```
+
+`POST /api/v1/trips/{tripId}/positions` сохраняет точку и обновляет
+`trips.last_position_at` в одной транзакции. PostgreSQL берёт максимум из
+предыдущего значения и `recorded_at`. После коммита ожидающая команда для этой
+поездки отменяется. `GET /api/v1/trips/{tripId}/positions` возвращает весь
+маршрут, отсортированный по `recorded_at`, затем по `id`.
+
+Каждый тик сканер одним запросом выбирает активные поездки. Возраст считается
+от `COALESCE(last_position_at, started_at)`. Частичный покрывающий индекс
+`trips_active_position_at_idx` поддерживает фильтрацию и порядок от самых
+старых поездок. Воркеры отправляют `REQUEST_POSITION` на `driver_id` с
+`trip_id` в `data`. Пока задача ждёт или выполняется, повторная постановка
+пропускается. Отменённая задача остаётся в канале до чтения воркером.
+
+Если очередь заполнена, сканер регистрирует `result=dropped`, пишет `Warn`
+и продолжает обход. На следующем тике PostgreSQL снова вернёт поездку, если
+она всё ещё активна и у неё нет свежих координат. Для вызова Push Service
+воркер делает одну попытку. После её завершения действует пауза
+`POSITION_CHECK_INTERVAL` для этой поездки, даже если между тиками изменилось
+время ожидания в очереди. До конца паузы сканер учитывает поездку как
+`result=duplicate`. Время окончания паузы хранится в памяти пула, истёкшие
+отметки удаляются на тиках. После рестарта опрос возобновляется по данным
+PostgreSQL.
+
+| Переменная | Назначение | Значение по умолчанию |
+|---|---|---|
+| `POSITION_CHECK_INTERVAL` | Период сканирования и пауза между запросами по одной поездке | `30s` |
+| `POSITION_STALE_AFTER` | Возраст координаты или поездки без точек для опроса | `60s` |
+| `POSITION_WORKERS` | Число воркеров | `4` |
+| `POSITION_QUEUE_SIZE` | Ёмкость канала | `100` |
+| `PUSH_HTTP_URL` | Базовый HTTP-адрес Push Service | Обязательная, из `.env` |
+| `PUSH_REQUEST_TIMEOUT` | Бюджет одного запроса к Push Service | `1s` |
+| `PUSH_ADMIN_URL` | Адрес для настройки заглушки при ручной проверке | Из `.env` |
+| `SHUTDOWN_TIMEOUT` | Общий бюджет остановки сервиса | `10s` |
+
+Логи запросов видны через `tripgoctl environment logs push-service`. В Grafana
+можно проверить заполненность очереди, число занятых воркеров и рост
+`tripgo.stale_checks{result="dropped"}` под нагрузкой. Спан обработки задачи
+содержит ссылку на спан сканирования и дочерний спан HTTP-вызова Push Service.
+
+---
+
+## 5. Команды Makefile
+
+Для интеграционных тестов используйте отдельную PostgreSQL-базу. Сначала
+выполните `make migrate` на этой базе. Тесты очищают таблицы через `TRUNCATE`.
 
 * `make generate` — кодогенерация роутера OpenAPI (`oapi-codegen`) и моков (`mockgen` через `go:generate`).
 * `make migrate` — накат всех миграций базы данных (`goose up`).
 * `make migrate-down` — откат последней миграции базы данных (`goose down`).
 * `make run` — компиляция и запуск сервиса локально.
-* `make test` — запуск модульных тестов с детектором гонок и расчётом покрытия пакетов `domain` и `usecase` (`Total coverage >= 50%`).
+* `make test` — запуск модульных и интеграционных тестов с детектором гонок и расчётом покрытия пакетов `domain` и `usecase`. Для модульных тестов без PostgreSQL используйте `go test -race ./...`.
 * `make test-integration` — запуск интеграционных тестов с реальной СУБД PostgreSQL. Каждый тест изолирован и автоматически очищает свои данные через `cleanDB` (`TRUNCATE TABLE ... CASCADE`), что гарантирует воспроизводимость и независимость тестов при повторных запусках (`-count=2`).
 * `make lint` — запуск полного набора линтеров (`golangci-lint`) со строгой проверкой архитектурных слоёв через `depguard`.
 * `make docker-build` — сборка компактного Docker-образа сервиса (`deploy/Dockerfile`).
 
 ---
 
-## 5. Архитектура сервиса
+## 6. Архитектура сервиса
 
 Сервис построен по принципам чистой архитектуры (Clean Architecture / Ports & Adapters). Кодовая база разделена на независимые слои с направлением зависимостей строго **снаружи внутрь**.
 
@@ -185,35 +242,36 @@ docker run -d --name tripgo-app \
        └────────────────────────┘
 ```
 
-### 5.1. Назначение слоёв
+### 6.1. Назначение слоёв
 
 | Слой | Путь пакета | Назначение и ответственность |
 |---|---|---|
 | **Domain** | `internal/domain/trip` | Ядро бизнес-логики: сущность `Trip`, правила переходов состояний (`Trip.Finish(at time.Time)`), валидация полей модели (`Trip.Validate()`), доменные ошибки (`ErrTripNotFound`, `ErrTripCompleted`, `ErrDriverBusy`, `ErrInvalidRequest`, `ErrIdempotencyConflict`) и тип ошибки валидации `ValidationError`. Не зависит ни от каких библиотек, фреймворков и инфраструктуры. |
 | **Model** | `internal/model` | Межуровневые типы и структуры данных (`Trip`, `Point`, `Status`, `IdempotencyRecord`), позволяющие слоям обмениваться сущностями без циклических импортов. |
-| **Usecase** | `internal/usecase/trip/{create,get,finish}` | Сценарии использования приложения. Координируют выполнение бизнес-логики: вызывают методы домена, управляют транзакциями через `TxManager`, сохраняют/читают данные через интерфейсы репозиториев, регистрируют бизнес-метрики. |
-| **Transport** | `internal/http/trip/{create,get,finish}` | HTTP-адаптеры: строгая десериализация и валидация JSON-запросов, вызов соответствующего usecase, сериализация ответа. `internal/http/trip/handler.go` объединяет адаптеры в реализацию интерфейса `api.ServerInterface`. Логирование доменных и валидационных ошибок через контекстный `*slog.Logger` с сохранением `trace_id`. |
+| **Usecase** | `internal/usecase/trip/{create,get,finish,addposition,listpositions}` | Сценарии использования приложения. Координируют выполнение бизнес-логики: вызывают методы домена, управляют транзакциями через `TxManager`, сохраняют/читают данные через интерфейсы репозиториев, регистрируют бизнес-метрики. |
+| **Transport** | `internal/http/trip/{create,get,finish,addposition,listpositions}` | HTTP-адаптеры: строгая десериализация и валидация JSON-запросов, вызов соответствующего usecase, сериализация ответа. `internal/http/trip/handler.go` объединяет адаптеры в реализацию интерфейса `api.ServerInterface`. Логирование доменных и валидационных ошибок через контекстный `*slog.Logger` с сохранением `trace_id`. |
 | **Error Mapping** | `internal/http/domainerror` | Единая точка трансляции доменных ошибок в структуру RFC 9457 `application/problem+json`. Скрывает внутренние детали инфраструктуры (при 500 никогда не возвращает SQL-ошибки или стектрейсы клиенту). |
 | **Middleware** | `internal/http/middleware` | Фиксированная цепочка промежуточной обработки: `Recover -> Tracing -> Logging -> Metrics -> router`. Обеспечивает pre-routing сопоставление маршрутов для устранения High Cardinality, корреляцию логов и трейсов (`trace_id`, `span_id`) и сквозную обработку паник. |
 | **Repository** | `internal/repository/trip` | Адаптер к базе данных PostgreSQL. Реализует интерфейсы, требуемые usecase, с использованием SQL-билдера `squirrel` и пула `pgxpool.Pool`. |
+| **Background polling** | `internal/worker/positions`, `internal/gateway/push` | Сканирование поездок, обработка ограниченной очереди и HTTP-адаптер к Push Service. |
 | **Infrastructure** | `internal/infra/{postgres,telemetry}` | Инфраструктурные компоненты: подключение к PostgreSQL с `otelpgx`, контекстный менеджер транзакций `txmanager.TxManager`, OpenTelemetry SDK (TracerProvider, MeterProvider, OTLP HTTP-экспортеры, контекстный handler для `log/slog`). |
 | **Container** | `internal/container` | Composition Root: явное связывание всех зависимостей сервиса в коде без глобальных переменных, скрытых синглтонов или сторонних DI-библиотек. |
 | **App Entrypoint**| `cmd/trip-service` | Точка входа в приложение: загрузка конфигурации, сборка контейнера, запуск HTTP-сервера и координация Graceful Shutdown по тайм-бюджету. |
 
-### 5.2. Правила зависимостей и контроль через `depguard`
+### 6.2. Правила зависимостей и контроль через `depguard`
 
 Зависимости направлены исключительно внутрь. Направление импортов контролируется линтером `depguard` в `.golangci.yml`:
 1. `internal/domain`: **запрещено** импортировать `net/http`, `chi`, `pgx`, `squirrel`, `otel`, `api`.
 2. `internal/usecase`: **запрещено** импортировать `net/http`, `chi`, `pgx`, `squirrel`, `api`.
 3. `internal/http/*`: **запрещено** импортировать `internal/repository/*` и `internal/infra/*`.
 
-### 5.3. Расположение интерфейсов
+### 6.3. Расположение интерфейсов
 
 Интерфейсы объявляются на стороне **потребителя** (внутри пакета, которому требуется зависимость), а не на стороне реализации:
 - `internal/usecase/trip/create/contract.go`: интерфейсы `TripRepository` и `TxManager`.
 - `internal/usecase/trip/finish/contract.go`: интерфейсы `TripRepository` и `TxManager`.
 - `internal/usecase/trip/get/contract.go`: интерфейс `TripRepository`.
-- `internal/http/trip/{create,get,finish}/contract.go`: интерфейсы соответствующих сценариев использования.
+- `internal/http/trip/{create,get,finish,addposition,listpositions}/contract.go`: интерфейсы соответствующих сценариев использования.
 - `internal/http/trip/handler.go`: узкий интерфейс `Pinger` (`Ping(ctx context.Context) error`).
 
 **Почему интерфейсы объявлены у потребителя:**

@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"errors"
-	"log"
 	"log/slog"
 	"net/http"
 	"os"
@@ -12,37 +11,40 @@ import (
 
 	"github.com/keyra88/tripgo/internal/config"
 	"github.com/keyra88/tripgo/internal/container"
+	"github.com/keyra88/tripgo/internal/infra/telemetry"
 )
 
 func main() {
 	cfg, err := config.Load()
 	if err != nil {
-		log.Fatalf("failed to load config: %v", err)
+		failStartup("failed to load config", err)
 	}
 
 	ctx := context.Background()
 
 	cnt, err := container.New(ctx, cfg)
 	if err != nil {
-		log.Fatalf("failed to create container: %v", err)
+		failStartup("failed to create container", err)
 	}
 
-	cnt.Logger.Info("starting trip-service", slog.String("addr", cfg.HTTPAddr))
-
-	go func() {
-		if err := cnt.Start(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			cnt.Logger.Error("server failed to listen", slog.Any("error", err))
-			os.Exit(1)
-		}
-	}()
-
 	stop := make(chan os.Signal, 1)
-	signal.Notify(stop, os.Interrupt, syscall.SIGTERM, syscall.SIGINT)
+	signal.Notify(stop, syscall.SIGINT, syscall.SIGTERM)
 
-	sig := <-stop
-	cnt.Logger.Info("received shutdown signal, stopping gracefully...", slog.String("signal", sig.String()))
+	cnt.Logger.Info("starting trip-service", slog.String("addr", cfg.HTTPAddr))
+	serverErr := cnt.Start(ctx)
 
-	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), cfg.ShutdownTimeout)
+	var failed bool
+	select {
+	case sig := <-stop:
+		cnt.Logger.Info("received shutdown signal, stopping gracefully", slog.String("signal", sig.String()))
+	case err := <-serverErr:
+		if !errors.Is(err, http.ErrServerClosed) {
+			cnt.Logger.Error("server failed to listen", slog.Any("error", err))
+			failed = true
+		}
+	}
+
+	shutdownCtx, shutdownCancel := context.WithTimeout(ctx, cfg.ShutdownTimeout)
 
 	shutdownDone := make(chan error, 1)
 	go func() {
@@ -62,5 +64,15 @@ func main() {
 		}
 	}
 
+	signal.Stop(stop)
 	cnt.Logger.Info("trip-service stopped gracefully")
+	if failed {
+		os.Exit(1)
+	}
+}
+
+func failStartup(message string, err error) {
+	logger := telemetry.NewLogger("trip-service", os.Getenv("LOG_LEVEL"))
+	logger.Error(message, slog.Any("error", err))
+	os.Exit(1)
 }

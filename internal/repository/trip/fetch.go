@@ -13,7 +13,7 @@ import (
 )
 
 func (r *Repository) GetTripByID(ctx context.Context, id uuid.UUID) (*model.Trip, error) {
-	ctx, cancel := r.withTimeout(ctx)
+	ctx, cancel := r.queryContext(ctx, tripsTable)
 	defer cancel()
 
 	query, args, err := r.sq.Select(
@@ -28,8 +28,9 @@ func (r *Repository) GetTripByID(ctx context.Context, id uuid.UUID) (*model.Trip
 		"status",
 		"started_at",
 		"finished_at",
+		"last_position_at",
 	).
-		From("trips").
+		From(tripsTable).
 		Where("id = ?", id).
 		ToSql()
 	if err != nil {
@@ -51,14 +52,14 @@ func (r *Repository) GetTripByID(ctx context.Context, id uuid.UUID) (*model.Trip
 }
 
 func (r *Repository) GetIdempotencyRecord(ctx context.Context, key uuid.UUID) (*model.IdempotencyRecord, error) {
-	ctx, cancel := r.withTimeout(ctx)
+	ctx, cancel := r.queryContext(ctx, idempotencyTable)
 	defer cancel()
 
 	exec := r.getExecutor(ctx)
 
 	query, args, err := r.sq.
 		Select("key", "request_hash", "trip_id", "created_at", "expires_at").
-		From("idempotency_keys").
+		From(idempotencyTable).
 		Where("key = ?", key).
 		ToSql()
 	if err != nil {
@@ -84,12 +85,12 @@ func (r *Repository) GetIdempotencyRecord(ctx context.Context, key uuid.UUID) (*
 }
 
 func (r *Repository) CountActiveTrips(ctx context.Context) (int64, error) {
-	ctx, cancel := r.withTimeout(ctx)
+	ctx, cancel := r.queryContext(ctx, tripsTable)
 	defer cancel()
 
 	query, args, err := r.sq.
 		Select("COUNT(*)").
-		From("trips").
+		From(tripsTable).
 		Where("status = ?", string(model.StatusActive)).
 		ToSql()
 	if err != nil {

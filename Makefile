@@ -1,9 +1,7 @@
 export PATH := $(CURDIR)/bin:$(PATH)
 
 DATABASE_URL ?= $(shell grep DATABASE_URL .env 2>/dev/null | cut -d '=' -f2-)
-ifeq ($(DATABASE_URL),)
-	DATABASE_URL := postgres://tripgo:tripgo@localhost:22032/tripgo?sslmode=disable
-endif
+export DATABASE_URL
 
 .PHONY: generate migrate migrate-down run test test-integration lint docker-build
 
@@ -18,20 +16,22 @@ generate:
 	go generate ./...
 
 migrate:
+	@test -n "$$DATABASE_URL" || { echo "DATABASE_URL is required"; exit 1; }
 	go tool goose -dir migrations postgres "$(DATABASE_URL)" up
 
 migrate-down:
+	@test -n "$$DATABASE_URL" || { echo "DATABASE_URL is required"; exit 1; }
 	go tool goose -dir migrations postgres "$(DATABASE_URL)" down
 
 run:
 	go run ./cmd/trip-service
 
 test:
-	go test -v -race -coverprofile=coverage.out -coverpkg=./internal/domain/...,./internal/usecase/... ./internal/domain/... ./internal/usecase/... ./internal/http/... ./internal/config/...
+	go test -v -race -p 1 -tags=integration -coverprofile=coverage.out -coverpkg=./internal/domain/...,./internal/usecase/... ./...
 	@go tool cover -func=coverage.out
 
 test-integration:
-	go test -v -race -tags=integration ./internal/repository/trip/... ./tests/...
+	go test -v -race -p 1 -tags=integration ./internal/repository/trip/... ./tests/...
 
 lint:
 	golangci-lint run

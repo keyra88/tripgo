@@ -27,6 +27,7 @@ func scanTrip(row pgx.Row) (*model.Trip, error) {
 		&statusStr,
 		&t.StartedAt,
 		&finishedAt,
+		&t.LastPositionAt,
 	)
 	if err != nil {
 		return nil, err

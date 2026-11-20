@@ -6,6 +6,7 @@ import (
 )
 
 func TestConfigValidation(t *testing.T) {
+	t.Setenv("PUSH_HTTP_URL", "http://push.example")
 	origDBURL := os.Getenv("DATABASE_URL")
 	origReadTimeout := os.Getenv("HTTP_READ_TIMEOUT")
 	origMaxConns := os.Getenv("DATABASE_MAX_CONNS")

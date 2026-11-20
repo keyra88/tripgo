@@ -27,6 +27,7 @@ type Metrics struct {
 	TripsCreated       metric.Int64Counter
 	TripsCompleted     metric.Int64Counter
 	TripsActive        metric.Int64ObservableGauge
+	PositionsSaved     metric.Int64Counter
 }
 
 type Telemetry struct {
@@ -45,13 +46,13 @@ func (h *traceContextHandler) Enabled(ctx context.Context, level slog.Level) boo
 }
 
 func (h *traceContextHandler) Handle(ctx context.Context, record slog.Record) error {
-	span := trace.SpanFromContext(ctx)
-	if span.SpanContext().IsValid() {
-		record.AddAttrs(
-			slog.String("trace_id", span.SpanContext().TraceID().String()),
-			slog.String("span_id", span.SpanContext().SpanID().String()),
-		)
+	spanContext := trace.SpanContextFromContext(ctx)
+	var traceID, spanID string
+	if spanContext.IsValid() {
+		traceID = spanContext.TraceID().String()
+		spanID = spanContext.SpanID().String()
 	}
+	record.AddAttrs(slog.String("trace_id", traceID), slog.String("span_id", spanID))
 	return h.handler.Handle(ctx, record)
 }
 
@@ -63,16 +64,7 @@ func (h *traceContextHandler) WithGroup(name string) slog.Handler {
 	return &traceContextHandler{handler: h.handler.WithGroup(name)}
 }
 
-func Setup(ctx context.Context, serviceName, serviceVersion, logLevel string) (*Telemetry, error) {
-	var closers []func(context.Context) error
-	shutdown := func(shutdownCtx context.Context) error {
-		var errs error
-		for i := len(closers) - 1; i >= 0; i-- {
-			errs = errors.Join(errs, closers[i](shutdownCtx))
-		}
-		return errs
-	}
-
+func NewLogger(serviceName, logLevel string) *slog.Logger {
 	var level slog.Level
 	switch strings.ToLower(logLevel) {
 	case "debug":
@@ -93,7 +85,20 @@ func Setup(ctx context.Context, serviceName, serviceVersion, logLevel string) (*
 			slog.String("service", serviceName),
 		}),
 	}
-	logger := slog.New(wrappedHandler)
+	return slog.New(wrappedHandler)
+}
+
+func Setup(ctx context.Context, serviceName, serviceVersion, logLevel string) (*Telemetry, error) {
+	var closers []func(context.Context) error
+	shutdown := func(shutdownCtx context.Context) error {
+		var errs error
+		for i := len(closers) - 1; i >= 0; i-- {
+			errs = errors.Join(errs, closers[i](shutdownCtx))
+		}
+		return errs
+	}
+
+	logger := NewLogger(serviceName, logLevel)
 
 	res, err := resource.New(ctx,
 		resource.WithAttributes(
@@ -222,6 +227,16 @@ func Setup(ctx context.Context, serviceName, serviceVersion, logLevel string) (*
 		return nil, err
 	}
 
+	positionsSaved, err := meter.Int64Counter(
+		"tripgo.positions.saved",
+		metric.WithDescription("Number of positions saved"),
+		metric.WithUnit("{position}"),
+	)
+	if err != nil {
+		_ = shutdown(ctx)
+		return nil, err
+	}
+
 	return &Telemetry{
 		Logger: logger,
 		Metrics: &Metrics{
@@ -230,6 +245,7 @@ func Setup(ctx context.Context, serviceName, serviceVersion, logLevel string) (*
 			TripsCreated:       tripsCreated,
 			TripsCompleted:     tripsCompleted,
 			TripsActive:        tripsActive,
+			PositionsSaved:     positionsSaved,
 		},
 		Shutdown: shutdown,
 		meter:    meter,

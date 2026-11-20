@@ -43,17 +43,17 @@ func (tm *txManager) Do(ctx context.Context, fn func(ctx context.Context) error)
 
 	defer func() {
 		if p := recover(); p != nil {
-			rollbackCtx, rollbackCancel := context.WithTimeout(context.Background(), tm.queryTimeout)
+			rollbackCtx, rollbackCancel := context.WithTimeout(context.WithoutCancel(ctx), tm.queryTimeout)
 			_ = tx.Rollback(rollbackCtx)
 			rollbackCancel()
 			panic(p)
 		} else if err != nil {
-			rollbackCtx, rollbackCancel := context.WithTimeout(context.Background(), tm.queryTimeout)
+			rollbackCtx, rollbackCancel := context.WithTimeout(context.WithoutCancel(ctx), tm.queryTimeout)
 			_ = tx.Rollback(rollbackCtx)
 			rollbackCancel()
 		} else if ctxErr := ctx.Err(); ctxErr != nil {
 			err = fmt.Errorf("transaction aborted, context canceled: %w", ctxErr)
-			rollbackCtx, rollbackCancel := context.WithTimeout(context.Background(), tm.queryTimeout)
+			rollbackCtx, rollbackCancel := context.WithTimeout(context.WithoutCancel(ctx), tm.queryTimeout)
 			_ = tx.Rollback(rollbackCtx)
 			rollbackCancel()
 		} else {
@@ -61,7 +61,7 @@ func (tm *txManager) Do(ctx context.Context, fn func(ctx context.Context) error)
 			defer commitCancel()
 			if commitErr := tx.Commit(commitCtx); commitErr != nil {
 				err = fmt.Errorf("commit transaction: %w", commitErr)
-				rollbackCtx, rollbackCancel := context.WithTimeout(context.Background(), tm.queryTimeout)
+				rollbackCtx, rollbackCancel := context.WithTimeout(context.WithoutCancel(ctx), tm.queryTimeout)
 				_ = tx.Rollback(rollbackCtx)
 				rollbackCancel()
 			}
