@@ -9,9 +9,10 @@ import (
 )
 
 type (
-	Trip   = trip.Trip
-	Point  = trip.Point
-	Status = trip.Status
+	Trip     = trip.Trip
+	Position = trip.Position
+	Point    = trip.Point
+	Status   = trip.Status
 )
 
 const (
@@ -25,4 +26,9 @@ type IdempotencyRecord struct {
 	TripID      uuid.UUID
 	CreatedAt   time.Time
 	ExpiresAt   time.Time
+}
+
+type StaleTrip struct {
+	TripID   uuid.UUID
+	DriverID uuid.UUID
 }

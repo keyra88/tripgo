@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"net/url"
 	"os"
 	"strconv"
 	"time"
@@ -25,6 +26,13 @@ type Config struct {
 	DBMaxConnLifetime time.Duration
 	DBConnectTimeout  time.Duration
 	DBQueryTimeout    time.Duration
+
+	PositionCheckInterval time.Duration
+	PositionStaleAfter    time.Duration
+	PositionWorkers       int
+	PositionQueueSize     int
+	PushHTTPURL           *url.URL
+	PushRequestTimeout    time.Duration
 }
 
 func Load() (*Config, error) {
@@ -100,6 +108,37 @@ func Load() (*Config, error) {
 		return nil, err
 	}
 
+	checkInterval, err := parseEnvDuration("POSITION_CHECK_INTERVAL", "30s")
+	if err != nil {
+		return nil, err
+	}
+	staleAfter, err := parseEnvDuration("POSITION_STALE_AFTER", "60s")
+	if err != nil {
+		return nil, err
+	}
+	workers, err := parsePositiveInt("POSITION_WORKERS", 4)
+	if err != nil {
+		return nil, err
+	}
+	queueSize, err := parsePositiveInt("POSITION_QUEUE_SIZE", 100)
+	if err != nil {
+		return nil, err
+	}
+	pushTimeout, err := parseEnvDuration("PUSH_REQUEST_TIMEOUT", "1s")
+	if err != nil {
+		return nil, err
+	}
+
+	rawPushURL := os.Getenv("PUSH_HTTP_URL")
+	if rawPushURL == "" {
+		return nil, fmt.Errorf("PUSH_HTTP_URL is required")
+	}
+	pushURL, err := url.Parse(rawPushURL)
+	if err != nil || (pushURL.Scheme != "http" && pushURL.Scheme != "https") || pushURL.Hostname() == "" ||
+		pushURL.User != nil || pushURL.RawQuery != "" || pushURL.Fragment != "" {
+		return nil, fmt.Errorf("PUSH_HTTP_URL must be an HTTP(S) base URL")
+	}
+
 	return &Config{
 		ServiceVersion:        getEnv("SERVICE_VERSION", "1.0.0"),
 		HTTPAddr:              httpAddr,
@@ -116,6 +155,13 @@ func Load() (*Config, error) {
 		DBMaxConnLifetime: maxConnLifetime,
 		DBConnectTimeout:  connTimeout,
 		DBQueryTimeout:    queryTimeout,
+
+		PositionCheckInterval: checkInterval,
+		PositionStaleAfter:    staleAfter,
+		PositionWorkers:       workers,
+		PositionQueueSize:     queueSize,
+		PushHTTPURL:           pushURL,
+		PushRequestTimeout:    pushTimeout,
 	}, nil
 }
 
@@ -148,4 +194,15 @@ func parseEnvInt32(key string, def int32) (int32, error) {
 		return 0, err
 	}
 	return int32(n), nil
+}
+
+func parsePositiveInt(key string, def int32) (int, error) {
+	value, err := parseEnvInt32(key, def)
+	if err != nil {
+		return 0, fmt.Errorf("parse %s: %w", key, err)
+	}
+	if value <= 0 {
+		return 0, fmt.Errorf("%s must be positive, got %d", key, value)
+	}
+	return int(value), nil
 }

@@ -7,7 +7,15 @@ import (
 	"github.com/Masterminds/squirrel"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/keyra88/tripgo/internal/infra/postgres"
 	"github.com/keyra88/tripgo/internal/infra/postgres/transaction"
+)
+
+const (
+	tripsTable         = "trips"
+	positionsTable     = "trip_positions"
+	idempotencyTable   = "idempotency_keys"
+	statusHistoryTable = "trip_status_history"
 )
 
 type Repository struct {
@@ -24,7 +32,8 @@ func New(pool *pgxpool.Pool, queryTimeout time.Duration) *Repository {
 	}
 }
 
-func (r *Repository) withTimeout(ctx context.Context) (context.Context, context.CancelFunc) {
+func (r *Repository) queryContext(ctx context.Context, collection string) (context.Context, context.CancelFunc) {
+	ctx = postgres.WithCollection(ctx, collection)
 	if _, ok := ctx.Deadline(); !ok && r.queryTimeout > 0 {
 		return context.WithTimeout(ctx, r.queryTimeout)
 	}

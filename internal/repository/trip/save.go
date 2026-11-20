@@ -15,11 +15,11 @@ import (
 )
 
 func (r *Repository) CreateTrip(ctx context.Context, trip *model.Trip) error {
-	ctx, cancel := r.withTimeout(ctx)
+	ctx, cancel := r.queryContext(ctx, tripsTable)
 	defer cancel()
 
 	now := time.Now().UTC()
-	query, args, err := r.sq.Insert("trips").
+	query, args, err := r.sq.Insert(tripsTable).
 		Columns(
 			"id",
 			"user_id",
@@ -69,11 +69,11 @@ func (r *Repository) CreateTrip(ctx context.Context, trip *model.Trip) error {
 }
 
 func (r *Repository) UpdateTrip(ctx context.Context, trip *model.Trip) error {
-	ctx, cancel := r.withTimeout(ctx)
+	ctx, cancel := r.queryContext(ctx, tripsTable)
 	defer cancel()
 
 	now := time.Now().UTC()
-	query, args, err := r.sq.Update("trips").
+	query, args, err := r.sq.Update(tripsTable).
 		Set("status", string(trip.Status)).
 		Set("finished_at", trip.FinishedAt).
 		Set("updated_at", now).
@@ -103,10 +103,10 @@ func (r *Repository) AddStatusHistory(
 	reason *string,
 	changedAt time.Time,
 ) error {
-	ctx, cancel := r.withTimeout(ctx)
+	ctx, cancel := r.queryContext(ctx, statusHistoryTable)
 	defer cancel()
 
-	query, args, err := r.sq.Insert("trip_status_history").
+	query, args, err := r.sq.Insert(statusHistoryTable).
 		Columns(
 			"trip_id",
 			"from_status",
@@ -135,7 +135,7 @@ func (r *Repository) AddStatusHistory(
 }
 
 func (r *Repository) LockIdempotencyKey(ctx context.Context, key uuid.UUID) error {
-	ctx, cancel := r.withTimeout(ctx)
+	ctx, cancel := r.queryContext(ctx, "")
 	defer cancel()
 
 	exec := r.getExecutor(ctx)
@@ -144,10 +144,10 @@ func (r *Repository) LockIdempotencyKey(ctx context.Context, key uuid.UUID) erro
 }
 
 func (r *Repository) SaveIdempotencyRecord(ctx context.Context, rec *model.IdempotencyRecord) error {
-	ctx, cancel := r.withTimeout(ctx)
+	ctx, cancel := r.queryContext(ctx, idempotencyTable)
 	defer cancel()
 
-	query, args, err := r.sq.Insert("idempotency_keys").
+	query, args, err := r.sq.Insert(idempotencyTable).
 		Columns("key", "request_hash", "trip_id", "created_at", "expires_at").
 		Values(rec.Key, rec.RequestHash, rec.TripID, rec.CreatedAt, rec.ExpiresAt).
 		Suffix("ON CONFLICT (key) DO UPDATE SET request_hash = EXCLUDED.request_hash, trip_id = EXCLUDED.trip_id, created_at = EXCLUDED.created_at, expires_at = EXCLUDED.expires_at").

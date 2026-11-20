@@ -2,6 +2,7 @@ package trip
 
 import (
 	"errors"
+	"math"
 	"time"
 
 	"github.com/google/uuid"
@@ -20,22 +21,23 @@ type Point struct {
 }
 
 type Trip struct {
-	ID         uuid.UUID
-	UserID     uuid.UUID
-	DriverID   uuid.UUID
-	StartPoint Point
-	EndPoint   Point
-	Price      int64
-	Status     Status
-	StartedAt  time.Time
-	FinishedAt *time.Time
+	ID             uuid.UUID
+	UserID         uuid.UUID
+	DriverID       uuid.UUID
+	StartPoint     Point
+	EndPoint       Point
+	Price          int64
+	Status         Status
+	StartedAt      time.Time
+	FinishedAt     *time.Time
+	LastPositionAt *time.Time
 }
 
 func ValidateCoordinates(point Point, name string) error {
-	if point.Latitude < -90 || point.Latitude > 90 {
+	if math.IsNaN(point.Latitude) || point.Latitude < -90 || point.Latitude > 90 {
 		return NewValidationError(name+" latitude", "must be between -90 and 90")
 	}
-	if point.Longitude < -180 || point.Longitude > 180 {
+	if math.IsNaN(point.Longitude) || point.Longitude < -180 || point.Longitude > 180 {
 		return NewValidationError(name+" longitude", "must be between -180 and 180")
 	}
 	return nil

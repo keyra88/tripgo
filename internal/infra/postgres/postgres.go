@@ -4,8 +4,8 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/exaring/otelpgx"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"go.opentelemetry.io/otel"
 
 	"github.com/keyra88/tripgo/internal/config"
 )
@@ -21,7 +21,7 @@ func NewPool(ctx context.Context, cfg *config.Config) (*pgxpool.Pool, error) {
 	poolConfig.MaxConnLifetime = cfg.DBMaxConnLifetime
 	poolConfig.ConnConfig.ConnectTimeout = cfg.DBConnectTimeout
 
-	poolConfig.ConnConfig.Tracer = otelpgx.NewTracer()
+	poolConfig.ConnConfig.Tracer = newQueryMetricsTracer(otel.GetMeterProvider())
 
 	connectCtx, cancel := context.WithTimeout(ctx, cfg.DBConnectTimeout)
 	defer cancel()
